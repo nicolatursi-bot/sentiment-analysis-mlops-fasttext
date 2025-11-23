@@ -59,7 +59,7 @@ jobs:
     
     - name: Run unit tests
       run: |
-        pytest tests/ -v --tb=short
+        python -m pytest tests/ -v --tb=short
     
     - name: Generate coverage report
       run: |
