@@ -1,5 +1,3 @@
-yaml
-
 name: Sentiment Analysis MLOps - CI/CD Pipeline
 
 on:
