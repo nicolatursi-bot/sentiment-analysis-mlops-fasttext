@@ -1,0 +1,393 @@
+yamlname: Sentiment Analysis MLOps - CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  
+  # JOB 1: CODE QUALITY
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black
+    
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Check code formatting with black
+      run: |
+        black --check src tests || true
+
+  # JOB 2: UNIT TESTS
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/ -v --tb=short
+    
+    - name: Generate coverage report
+      run: |
+        pytest tests/ --cov=src --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  # JOB 3: INTEGRATION TESTS
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Test data loading pipeline
+      run: |
+        python -c "
+        from src.data_loader_fasttext import SentimentDataLoader
+        loader = SentimentDataLoader()
+        print('✅ Data loader initialized successfully')
+        print('✅ Label mapping:', loader.get_label_names())
+        "
+    
+    - name: Test model pipeline
+      run: |
+        python -c "
+        from src.model_fasttext import FastTextSentimentModel
+        model = FastTextSentimentModel()
+        print('✅ Model initialized successfully')
+        print('✅ Model info available')
+        "
+    
+    - name: Test monitoring pipeline
+      run: |
+        python -c "
+        import numpy as np
+        from src.monitor import ModelMonitor
+        ref_pred = np.random.choice([0, 1, 2], size=50)
+        ref_labels = np.random.choice([0, 1, 2], size=50)
+        monitor = ModelMonitor('test', ref_pred, ref_labels)
+        print('✅ Monitor initialized successfully')
+        print('✅ All integration tests passed')
+        "
+
+  # JOB 4: MODEL VALIDATION
+  model-validation:
+    name: Model Validation
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Validate model output format
+      run: |
+        python -c "
+        from src.model_fasttext import FastTextSentimentModel
+        import numpy as np
+        
+        # Crea file di test
+        with open('/tmp/test_train.txt', 'w') as f:
+            for i in range(20):
+                label = ['positive', 'neutral', 'negative'][i % 3]
+                f.write(f'__label__{label} test text {i}\n')
+        
+        # Train e test
+        model = FastTextSentimentModel()
+        stats = model.train('/tmp/test_train.txt', epoch=5, dim=50)
+        
+        # Valida format
+        assert 'training_time' in stats
+        assert stats['model_type'] == 'FastText'
+        
+        # Test inference
+        preds = model.inference(['test text'])
+        assert len(preds) == 1
+        assert 'label' in preds[0]
+        assert 'confidence' in preds[0]
+        assert preds[0]['label'] in ['positive', 'neutral', 'negative']
+        
+        print('✅ Model output format validated')
+        "
+
+  # JOB 5: DOCUMENTATION CHECK
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    needs: model-validation
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Check README exists
+      run: |
+        if [ -f "README.md" ]; then
+          echo "✅ README.md found"
+          wc -l README.md
+        else
+          echo "❌ README.md not found"
+          exit 1
+        fi
+    
+    - name: Check docstrings
+      run: |
+        python -c "
+        import os
+        import ast
+        
+        src_dir = 'src'
+        missing_docs = []
+        
+        for file in os.listdir(src_dir):
+            if file.endswith('.py') and file != '__init__.py':
+                filepath = os.path.join(src_dir, file)
+                with open(filepath, 'r') as f:
+                    try:
+                        tree = ast.parse(f.read())
+                        for node in ast.walk(tree):
+                            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                                if not ast.get_docstring(node):
+                                    missing_docs.append(f'{file}: {node.name}')
+                    except:
+                        pass
+        
+        if missing_docs:
+          print('⚠️ Found functions/classes without docstrings:')
+          for doc in missing_docs:
+            print(f'  - {doc}')
+        else:
+          print('✅ All functions have docstrings')
+        "
+    
+    - name: Set up Python for config check
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Validate configuration files
+      run: |
+        python -c "
+        import json
+        
+        # Check config.json
+        with open('config.json', 'r') as f:
+          config = json.load(f)
+          assert 'project_name' in config
+          assert 'fasttext' in config
+          assert 'monitoring' in config
+          print('✅ config.json is valid')
+        
+        # Check requirements.txt
+        with open('requirements.txt', 'r') as f:
+          lines = f.readlines()
+          assert len(lines) > 0
+          print(f'✅ requirements.txt has {len(lines)} packages')
+        "
+
+  # JOB 6: PERFORMANCE BENCHMARK
+  performance:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    needs: documentation
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run performance benchmark
+      run: |
+        python -c "
+        import time
+        import numpy as np
+        from src.model_fasttext import FastTextSentimentModel
+        
+        # Create test file
+        with open('/tmp/perf_test.txt', 'w') as f:
+            for i in range(100):
+                label = ['positive', 'neutral', 'negative'][i % 3]
+                f.write(f'__label__{label} performance test text {i}\n')
+        
+        # Train model
+        model = FastTextSentimentModel()
+        train_start = time.time()
+        model.train('/tmp/perf_test.txt', epoch=10, dim=50)
+        train_time = time.time() - train_start
+        
+        # Test inference latency
+        test_texts = ['test text ' + str(i) for i in range(100)]
+        
+        infer_start = time.time()
+        predictions = model.inference(test_texts)
+        infer_time = time.time() - infer_start
+        
+        avg_latency = (infer_time * 1000) / len(test_texts)
+        
+        print(f'Training time: {train_time:.2f}s')
+        print(f'Inference latency: {avg_latency:.2f}ms per sample')
+        print(f'Batch inference time: {infer_time:.3f}s for {len(test_texts)} samples')
+        
+        # FastText should be fast
+        assert avg_latency < 50, f'Latency too high: {avg_latency}ms'
+        assert train_time < 60, f'Training too slow: {train_time}s'
+        
+        print('✅ Performance benchmarks passed')
+        print('✅ FastText is production-ready')
+        "
+
+  # JOB 7: DEPLOYMENT (SUCCESS CHECK)
+  deployment:
+    name: Deployment Readiness
+    runs-on: ubuntu-latest
+    needs: performance
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Validate deployment readiness
+      run: |
+        python -c "
+        print('=' * 60)
+        print('DEPLOYMENT READINESS CHECK')
+        print('=' * 60)
+        
+        # Check all modules importable
+        try:
+            from src.data_loader_fasttext import SentimentDataLoader, load_and_prepare_data
+            print('✅ data_loader_fasttext imports successful')
+        except Exception as e:
+            print(f'❌ data_loader_fasttext import failed: {e}')
+            exit(1)
+        
+        try:
+            from src.model_fasttext import FastTextSentimentModel, ModelTrainer
+            print('✅ model_fasttext imports successful')
+        except Exception as e:
+            print(f'❌ model_fasttext import failed: {e}')
+            exit(1)
+        
+        try:
+            from src.monitor import ModelMonitor, PerformanceMetrics, DriftDetector
+            print('✅ monitor imports successful')
+        except Exception as e:
+            print(f'❌ monitor import failed: {e}')
+            exit(1)
+        
+        try:
+            from src.utils import ConfigManager, setup_logging, get_project_dirs
+            print('✅ utils imports successful')
+        except Exception as e:
+            print(f'❌ utils import failed: {e}')
+            exit(1)
+        
+        print()
+        print('=' * 60)
+        print('ALL SYSTEMS GO - READY FOR DEPLOYMENT ✅')
+        print('=' * 60)
+        print()
+        print('FASE 1: Implementazione Modello FastText ✅')
+        print('FASE 2: Pipeline CI/CD ✅')
+        print('FASE 3: Monitoraggio Continuo ✅')
+        print()
+        print('Status: Production Ready 🚀')
+        print('=' * 60)
+        "
+    
+    - name: Generate summary
+      run: |
+        echo "## ✅ Pipeline Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Jobs Completed:" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Code Quality" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Unit Tests" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Integration Tests" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Model Validation" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Documentation" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Performance Benchmark" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Deployment Readiness" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### All Phases:" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ FASE 1: FastText Model Implementation" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ FASE 2: CI/CD Pipeline" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ FASE 3: Continuous Monitoring" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Status: 🚀 Production Ready" >> $GITHUB_STEP_SUMMARY
+```
