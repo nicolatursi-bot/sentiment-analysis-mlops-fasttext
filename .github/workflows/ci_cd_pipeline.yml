@@ -1,4 +1,6 @@
-yamlname: Sentiment Analysis MLOps - CI/CD Pipeline
+yaml
+
+name: Sentiment Analysis MLOps - CI/CD Pipeline
 
 on:
   push:
