@@ -1,27 +1,23 @@
 """
-MONITOR MODULE - Fase 3: Monitoraggio Continuo
-================================================
-Gestisce il monitoraggio delle performance del modello e rilevamento del drift.
+MONITOR - Monitoraggio Continuo del Modello
+============================================
+Monitora performance del modello RoBERTa e rilevamento del drift.
 
 Funzionalità:
-- Tracciamento metriche di performance in real-time
-- Drift detection (chi-square test)
+- Tracciamento metriche di performance
+- Drift detection
 - Latency monitoring
-- Report generation
-- Export metriche (JSON, CSV)
+- Export metriche
 """
 
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 import logging
 from datetime import datetime
 import json
 import csv
 from pathlib import Path
 from scipy.stats import chi2_contingency
-import warnings
-
-warnings.filterwarnings('ignore')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,56 +37,48 @@ class PerformanceMetrics:
         return np.mean(predictions == labels)
     
     @staticmethod
-    def calculate_precision(predictions: np.ndarray, labels: np.ndarray, class_idx: int = None) -> float:
-        """Calcola la precision."""
-        if class_idx is None:
-            # Multi-class average
-            classes = np.unique(labels)
-            precisions = []
-            for c in classes:
-                pred_mask = predictions == c
-                if pred_mask.sum() == 0:
-                    precisions.append(0.0)
-                else:
-                    correct = ((predictions == c) & (labels == c)).sum()
-                    precisions.append(correct / pred_mask.sum())
-            return np.mean(precisions)
-        else:
-            # Single class
-            pred_mask = predictions == class_idx
+    def calculate_precision(predictions: np.ndarray, labels: np.ndarray) -> float:
+        """Calcola la precision media (multi-class)."""
+        if len(predictions) == 0:
+            return 0.0
+        
+        classes = np.unique(labels)
+        precisions = []
+        
+        for c in classes:
+            pred_mask = predictions == c
             if pred_mask.sum() == 0:
-                return 0.0
-            correct = ((predictions == class_idx) & (labels == class_idx)).sum()
-            return correct / pred_mask.sum()
+                precisions.append(0.0)
+            else:
+                correct = ((predictions == c) & (labels == c)).sum()
+                precisions.append(correct / pred_mask.sum())
+        
+        return np.mean(precisions) if precisions else 0.0
     
     @staticmethod
-    def calculate_recall(predictions: np.ndarray, labels: np.ndarray, class_idx: int = None) -> float:
-        """Calcola il recall."""
-        if class_idx is None:
-            # Multi-class average
-            classes = np.unique(labels)
-            recalls = []
-            for c in classes:
-                label_mask = labels == c
-                if label_mask.sum() == 0:
-                    recalls.append(0.0)
-                else:
-                    correct = ((predictions == c) & (labels == c)).sum()
-                    recalls.append(correct / label_mask.sum())
-            return np.mean(recalls)
-        else:
-            # Single class
-            label_mask = labels == class_idx
+    def calculate_recall(predictions: np.ndarray, labels: np.ndarray) -> float:
+        """Calcola il recall medio (multi-class)."""
+        if len(predictions) == 0:
+            return 0.0
+        
+        classes = np.unique(labels)
+        recalls = []
+        
+        for c in classes:
+            label_mask = labels == c
             if label_mask.sum() == 0:
-                return 0.0
-            correct = ((predictions == class_idx) & (labels == class_idx)).sum()
-            return correct / label_mask.sum()
+                recalls.append(0.0)
+            else:
+                correct = ((predictions == c) & (labels == c)).sum()
+                recalls.append(correct / label_mask.sum())
+        
+        return np.mean(recalls) if recalls else 0.0
     
     @staticmethod
-    def calculate_f1_score(predictions: np.ndarray, labels: np.ndarray, class_idx: int = None) -> float:
+    def calculate_f1_score(predictions: np.ndarray, labels: np.ndarray) -> float:
         """Calcola l'F1-score."""
-        precision = PerformanceMetrics.calculate_precision(predictions, labels, class_idx)
-        recall = PerformanceMetrics.calculate_recall(predictions, labels, class_idx)
+        precision = PerformanceMetrics.calculate_precision(predictions, labels)
+        recall = PerformanceMetrics.calculate_recall(predictions, labels)
         
         if precision + recall == 0:
             return 0.0
@@ -99,15 +87,15 @@ class PerformanceMetrics:
 
 
 class DriftDetector:
-    """Rileva drift nei dati (change in data distribution)."""
+    """Rileva drift nei dati."""
     
     def __init__(self, reference_labels: np.ndarray, threshold: float = 0.05):
         """
-        Inizializza il drift detector.
+        Inizializza drift detector.
         
         Args:
-            reference_labels: Etichette di riferimento per il confronto
-            threshold: Soglia p-value per rilevare drift (default: 0.05)
+            reference_labels: Etichette di riferimento
+            threshold: Soglia p-value per drift (default: 0.05)
         """
         self.reference_labels = reference_labels
         self.threshold = threshold
@@ -115,21 +103,20 @@ class DriftDetector:
     
     def detect_drift(self, current_labels: np.ndarray) -> Dict:
         """
-        Rileva drift tra distribuzione di riferimento e corrente usando chi-square test.
+        Rileva drift usando chi-square test.
         
         Args:
-            current_labels: Etichette correnti da testare
+            current_labels: Etichette correnti
             
         Returns:
-            Dict con risultati del test di drift
+            Dict con risultati drift detection
         """
-        logger.info(f"Testing drift: {len(current_labels)} samples")
+        logger.info(f"Testing drift su {len(current_labels)} samples...")
         
-        # Crea tabelle di contingenza
+        # Distribuzioni
         ref_counts = np.bincount(self.reference_labels, minlength=3)
         curr_counts = np.bincount(current_labels, minlength=3)
         
-        # Normalizza
         ref_dist = ref_counts / ref_counts.sum()
         curr_dist = curr_counts / curr_counts.sum()
         
@@ -167,7 +154,7 @@ class DriftDetector:
 
 
 class ModelMonitor:
-    """Monitora le performance del modello e rileva drift."""
+    """Monitora le performance del modello RoBERTa."""
     
     def __init__(self, model_name: str, reference_predictions: np.ndarray, 
                  reference_labels: np.ndarray, drift_threshold: float = 0.05):
@@ -178,7 +165,7 @@ class ModelMonitor:
             model_name: Nome del modello
             reference_predictions: Predizioni di riferimento
             reference_labels: Etichette di riferimento
-            drift_threshold: Soglia drift (0.05 = 5%)
+            drift_threshold: Soglia drift
         """
         self.model_name = model_name
         self.reference_predictions = reference_predictions
@@ -190,7 +177,8 @@ class ModelMonitor:
         self.drift_detector = DriftDetector(reference_labels, threshold=drift_threshold)
         
         logger.info(f"ModelMonitor inizializzato per: {model_name}")
-        logger.info(f"Reference accuracy: {PerformanceMetrics.calculate_accuracy(reference_predictions, reference_labels):.4f}")
+        baseline_accuracy = PerformanceMetrics.calculate_accuracy(reference_predictions, reference_labels)
+        logger.info(f"Baseline accuracy: {baseline_accuracy:.4f}")
     
     def record_inference(self, predictions: np.ndarray, labels: np.ndarray, 
                         latencies: List[float]) -> None:
@@ -200,7 +188,7 @@ class ModelMonitor:
         Args:
             predictions: Array di predizioni
             labels: Array di etichette vere
-            latencies: Lista di latenze (millisecondi)
+            latencies: Lista di latenze (ms)
         """
         timestamp = datetime.now().isoformat()
         
@@ -217,13 +205,12 @@ class ModelMonitor:
             'p_value': drift_result['p_value'],
             'mean_latency_ms': float(np.mean(latencies)) if latencies else 0.0,
             'p95_latency_ms': float(np.percentile(latencies, 95)) if latencies else 0.0,
-            'p99_latency_ms': float(np.percentile(latencies, 99)) if latencies else 0.0
         }
         
         self.inference_records.append(record)
         self.latency_records.extend(latencies)
         
-        logger.info(f"Recorded batch: accuracy={accuracy:.4f}, drift={drift_result['has_drift']}")
+        logger.info(f"Record: accuracy={accuracy:.4f}, f1={f1:.4f}, drift={drift_result['has_drift']}")
     
     def get_monitoring_report(self) -> Dict:
         """Genera il report di monitoraggio."""
@@ -244,19 +231,16 @@ class ModelMonitor:
             'drift_percentage': float(sum(drifts) / len(drifts) * 100) if drifts else 0.0,
             'inference_latency_stats': {
                 'mean_latency_ms': float(np.mean(self.latency_records)) if self.latency_records else 0.0,
-                'median_latency_ms': float(np.median(self.latency_records)) if self.latency_records else 0.0,
                 'p95_latency_ms': float(np.percentile(self.latency_records, 95)) if self.latency_records else 0.0,
                 'p99_latency_ms': float(np.percentile(self.latency_records, 99)) if self.latency_records else 0.0,
-                'min_latency_ms': float(np.min(self.latency_records)) if self.latency_records else 0.0,
-                'max_latency_ms': float(np.max(self.latency_records)) if self.latency_records else 0.0
             },
-            'recent_records': self.inference_records[-10:]  # Ultimi 10 record
+            'recent_records': self.inference_records[-10:]
         }
         
         return report
     
     def export_metrics_json(self, filepath: str) -> None:
-        """Esporta metriche in formato JSON."""
+        """Esporta metriche in JSON."""
         report = self.get_monitoring_report()
         
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
@@ -264,10 +248,10 @@ class ModelMonitor:
         with open(filepath, 'w') as f:
             json.dump(report, f, indent=4)
         
-        logger.info(f"✅ Metriche esportate in JSON: {filepath}")
+        logger.info(f"✅ Metriche esportate: {filepath}")
     
     def export_metrics_csv(self, filepath: str) -> None:
-        """Esporta metriche in formato CSV."""
+        """Esporta metriche in CSV."""
         if not self.inference_records:
             logger.warning("Nessun record da esportare")
             return
@@ -279,14 +263,14 @@ class ModelMonitor:
             writer.writeheader()
             writer.writerows(self.inference_records)
         
-        logger.info(f"✅ Metriche esportate in CSV: {filepath}")
+        logger.info(f"✅ Metriche esportate: {filepath}")
     
     def get_retraining_trigger(self) -> bool:
         """
         Determina se il modello deve essere riaddestrato.
         
         Trigger:
-        - Accuracy scesa sotto il 85%
+        - Accuracy < 85%
         - Drift rilevato
         """
         if not self.inference_records:
