@@ -194,8 +194,3 @@ class TestFastTextFormatGeneration:
             # Verifica contenuto
             assert extracted_label in ['negative', 'neutral', 'positive']
             assert extracted_text == text
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-```
