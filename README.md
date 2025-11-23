@@ -314,7 +314,7 @@ MIT License
 
 - **Progetto**: Sentiment Analysis MLOps
 - **Azienda**: MachineInnovators Inc.
-- **Repository**: https://github.com/[nicolatursi]/sentiment-analysis-mlops-fasttext
+- **Repository**: https://github.com/nicolatursi-bot/sentiment-analysis-mlops-fasttext
 - **Modello**: cardiffnlp/twitter-roberta-base-sentiment-latest
 
 ---
