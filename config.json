@@ -1,19 +1,22 @@
 {
   "project_name": "Sentiment Analysis MLOps",
   "version": "1.0.0",
-  "description": "Online reputation monitoring using FastText",
-  "fasttext": {
-    "lr": 0.5,
-    "epoch": 25,
-    "wordNgrams": 2,
-    "dim": 100,
-    "loss": "softmax",
-    "model_type": "supervised"
+  "description": "Online reputation monitoring using RoBERTa preaddestrato",
+  "company": "MachineInnovators Inc.",
+  "model": {
+    "type": "RoBERTa",
+    "name": "twitter-roberta-base-sentiment-latest",
+    "source": "https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest",
+    "pretrained": true,
+    "framework": "transformers",
+    "classes": ["negative", "neutral", "positive"],
+    "num_classes": 3
   },
   "monitoring": {
     "window_size": 100,
     "drift_threshold": 0.05,
-    "retraining_trigger_accuracy": 0.85
+    "retraining_trigger_accuracy": 0.85,
+    "enabled": true
   },
   "data_paths": {
     "raw": "data/raw",
@@ -24,6 +27,7 @@
   },
   "dataset": {
     "name": "tweet_eval",
+    "source": "HuggingFace Datasets",
     "task": "sentiment",
     "num_classes": 3,
     "classes": ["negative", "neutral", "positive"]
@@ -31,6 +35,7 @@
   "pipeline": {
     "ci_cd": "GitHub Actions",
     "testing_framework": "pytest",
-    "code_quality": ["flake8", "black"]
+    "code_quality": ["flake8", "black"],
+    "deploy_target": "HuggingFace"
   }
 }
